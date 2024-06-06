@@ -1,0 +1,74 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        arch: [x86_64]
+        os: [ubuntu-latest]
+        branch: [latest-stable]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Alpine Linux for ${{ matrix.arch }}
+        uses: jirutka/setup-alpine@v1
+        with:
+          arch: ${{ matrix.arch }}
+          branch: ${{ matrix.branch }}
+          packages: >
+            build-base coreutils findutils gawk grep tar xz
+          shell-name: alpine.sh
+
+      - name: Build inside chroot
+        id: build
+        env:
+          ARCH: ${{ matrix.arch }}
+        shell: alpine.sh {0}
+        run: |
+          VERSION=$(grep -Poi 'versionstring.*= "\K.*(?=")' hmp3/src/test/tomp3.cpp | tr -d ',')
+          sed 's/^LFLAGS=.*/& -static-libgcc -static-libstdc++ -static/' -i Makefile
+          make -j$(nproc) || exit 1
+          strip builds/release/hmp3
+          tar -cJvf hmp3_$(echo $VERSION | awk '{print $1}')-$ARCH.tar.xz -C builds/release hmp3
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hmp3-${{ matrix.arch }}
+          path: ./**/hmp3*.tar.*
+
+  release:
+    # if: false
+    needs: [build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Upload release assets
+        uses: spvkgn/nightly-release@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          prerelease: false
+          tag_name: latest
+          name: Linux build ${{ needs.build.outputs.version }}
+          body: |
+            Built on Alpine Linux and statically linked
+          files: |
+            ./**/hmp3*.tar.*
