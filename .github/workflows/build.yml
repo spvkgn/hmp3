@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        arch: [x86_64]
+        arch: [x86_64, aarch64]
         os: [ubuntu-latest]
         branch: [latest-stable]
     steps:
@@ -36,11 +36,16 @@ jobs:
           ARCH: ${{ matrix.arch }}
         shell: alpine.sh {0}
         run: |
-          VERSION=$(grep -Poi 'versionstring.*= "\K.*(?=")' hmp3/src/test/tomp3.cpp | tr -d ',')
+          case $ARCH in
+            x86_64)  PLATFORM=x64 ;;
+            aarch64) PLATFORM=arm64 ;;
+          esac
+          # VERSION=$(grep -Poi 'versionstring.*= "\K.*(?=")' hmp3/src/test/tomp3.cpp | tr -d ',')
           sed 's/^LFLAGS=.*/& -static-libgcc -static-libstdc++ -static/' -i Makefile
           make -j$(nproc) || exit 1
           strip builds/release/hmp3
-          tar -cJvf hmp3_$(echo $VERSION | awk '{print $1}')-$ARCH.tar.xz -C builds/release hmp3
+          VERSION=$(./builds/release/hmp3 -h 2>&1 | grep -Po '(\d+\.)+\d+.*' | tr -d ',')
+          tar -cJvf hmp3_$(echo $VERSION | awk '{print $1}')-$PLATFORM.tar.xz -C builds/release hmp3
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts
